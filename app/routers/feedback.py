@@ -102,4 +102,7 @@ def create_feedback(
     db.commit()
     db.refresh(feedback)
 
+    from app.services.points_service import process_feedback_points
+    process_feedback_points(db, feedback)
+
     return feedback

@@ -94,6 +94,9 @@ def create_purchase(
     try:
         db.commit()
         db.refresh(purchase)
+        
+        from app.services.points_service import process_purchase_points
+        process_purchase_points(db, journey.journey_id)
 
     except IntegrityError:
         db.rollback()

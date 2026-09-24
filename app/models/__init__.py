@@ -7,3 +7,4 @@ from app.models.journey import Journey
 from app.models.interaction import Interaction
 from app.models.purchase import Purchase
 from app.models.feedback import Feedback
+from app.models.employee_points import EmployeePoint

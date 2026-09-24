@@ -410,7 +410,72 @@ def main():
             f"status={r_dup.status_code}, body={r_dup.text}",
         )
 
+    # ================= Module 7 (real): Points Engine =================
+    # available_employee_id was captured earlier during the interactions section
+    if available_employee_id:
+        # GET total points
+        r_pts = get(f"/api/v1/employees/{available_employee_id}/points")
+        check(
+            "GET /api/v1/employees/{id}/points returns 200",
+            r_pts.status_code == 200,
+            f"status={r_pts.status_code}, body={r_pts.text}",
+        )
+        if r_pts.status_code == 200:
+            body_pts = r_pts.json()
+            check(
+                "Points response has employee_id",
+                "employee_id" in body_pts,
+                f"body={body_pts}",
+            )
+            check(
+                "Points response has total_points (int >= 0)",
+                isinstance(body_pts.get("total_points"), int) and body_pts["total_points"] >= 0,
+                f"body={body_pts}",
+            )
+            # After a purchase with rating=5, expect at least purchase(50) + interaction(10) + good_rating(20)
+            check(
+                "Total points > 0 after purchase + good feedback",
+                body_pts.get("total_points", 0) > 0,
+                f"total_points={body_pts.get('total_points')}",
+            )
+
+        # GET points history
+        r_hist = get(f"/api/v1/employees/{available_employee_id}/points/history")
+        check(
+            "GET /api/v1/employees/{id}/points/history returns 200",
+            r_hist.status_code == 200,
+            f"status={r_hist.status_code}, body={r_hist.text}",
+        )
+        if r_hist.status_code == 200:
+            hist = r_hist.json()
+            check(
+                "Points history is a list",
+                isinstance(hist, list),
+                f"body={hist}",
+            )
+            check(
+                "Points history has entries",
+                len(hist) > 0,
+                f"history length={len(hist)}",
+            )
+            if hist:
+                entry = hist[0]
+                check(
+                    "History entry has required fields",
+                    all(k in entry for k in ("point_entry_id", "employee_id", "points", "reason", "created_at")),
+                    f"entry={entry}",
+                )
+
+        # Unknown employee → 404
+        r_bad = get("/api/v1/employees/00000000-0000-0000-0000-000000000000/points")
+        check(
+            "GET points for unknown employee returns 404",
+            r_bad.status_code == 404,
+            f"status={r_bad.status_code}, body={r_bad.text}",
+        )
+
     print_summary()
+
 
 
 def print_summary():
