@@ -279,6 +279,77 @@ def main():
         f"status={r.status_code}, body={r.text}",
     )
 
+    # ================= Module 5: Interactions & Transfers =================
+    # ================= Module 5: Interactions & Transfers =================
+    # Query available employee again for the real department
+    r_avail = get(f"/api/v1/departments/{DEPARTMENT_WITH_ONLINE_EMPLOYEE}/available-employees")
+    if journey_id and r_avail.status_code == 200:
+        available_employee_id = r_avail.json().get("employee_id")
+        department_id = r_avail.json().get("department_id")
+
+        if available_employee_id and department_id:
+            # 1. Start Interaction
+            r_int = post(
+                f"/api/v1/journeys/{journey_id}/interactions",
+                json={"employee_id": available_employee_id, "department_id": department_id},
+            )
+            check(
+                "POST /api/v1/journeys/{id}/interactions creates an interaction (201)",
+                r_int.status_code == 201,
+                f"status={r_int.status_code}, body={r_int.text}",
+            )
+            interaction_id = None
+            if r_int.status_code == 201:
+                body_int = r_int.json()
+                interaction_id = body_int.get("interaction_id")
+                check("Response includes interaction_id", bool(interaction_id), f"body={body_int}")
+                check("Interaction order is 1", body_int.get("interaction_order") == 1, f"body={body_int}")
+                check("Server set started_at", bool(body_int.get("started_at")), f"body={body_int}")
+
+            # 2. Transfer Interaction
+            if interaction_id:
+                r_trans = post(
+                    f"/api/v1/interactions/{interaction_id}/transfer",
+                    json={"department_id": department_id},
+                )
+                check(
+                    "POST /api/v1/interactions/{id}/transfer processes the transfer (200)",
+                    r_trans.status_code == 200,
+                    f"status={r_trans.status_code}, body={r_trans.text}",
+                )
+                new_interaction_id = None
+                if r_trans.status_code == 200:
+                    body_trans = r_trans.json()
+                    check("Transfer response indicates success", body_trans.get("transferred") is True, f"body={body_trans}")
+                    new_interaction_id = body_trans.get("new_interaction_id")
+                    check("Transfer response includes new_interaction_id", bool(new_interaction_id), f"body={body_trans}")
+
+                # 3. End new Interaction
+                if new_interaction_id:
+                    r_end = post(f"/api/v1/interactions/{new_interaction_id}/end")
+                    check(
+                        "POST /api/v1/interactions/{id}/end closes the interaction (200)",
+                        r_end.status_code == 200,
+                        f"status={r_end.status_code}, body={r_end.text}",
+                    )
+                    if r_end.status_code == 200:
+                        body_end = r_end.json()
+                        check("End response includes calculated ended_at", bool(body_end.get("ended_at")), f"body={body_end}")
+                        check("End response includes duration_seconds", body_end.get("duration_seconds") is not None, f"body={body_end}")
+
+            # 4. Check Journey includes all interactions in order
+            r_j = get(f"/api/v1/journeys/{journey_id}")
+            if r_j.status_code == 200:
+                interactions_list = r_j.json().get("interactions", [])
+                check(
+                    "GET /api/v1/journeys/{id} returns both interactions",
+                    len(interactions_list) == 2,
+                    f"Found {len(interactions_list)} interactions",
+                )
+                if len(interactions_list) == 2:
+                    check("First interaction is order 1", interactions_list[0].get("interaction_order") == 1)
+                    check("Second interaction is order 2", interactions_list[1].get("interaction_order") == 2)
+
     print_summary()
 
 
