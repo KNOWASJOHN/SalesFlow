@@ -350,6 +350,66 @@ def main():
                     check("First interaction is order 1", interactions_list[0].get("interaction_order") == 1)
                     check("Second interaction is order 2", interactions_list[1].get("interaction_order") == 2)
 
+    # ================= Module 6: Purchases =================
+    if journey_id:
+        r = post(
+            f"/api/v1/journeys/{journey_id}/purchase",
+            json={"product_category": "Software", "amount": 150.00},
+        )
+        check(
+            "POST /api/v1/journeys/{id}/purchase creates a purchase (201)",
+            r.status_code == 201,
+            f"status={r.status_code}, body={r.text}",
+        )
+        if r.status_code == 201:
+            check("Purchase response has product_category", r.json().get("product_category") == "Software", f"body={r.json()}")
+
+        # Try purchasing again on the same journey -> expect 409
+        r_dup = post(
+            f"/api/v1/journeys/{journey_id}/purchase",
+            json={"product_category": "Software", "amount": 150.00},
+        )
+        check(
+            "POST /api/v1/journeys/{id}/purchase again returns 409",
+            r_dup.status_code == 409,
+            f"status={r_dup.status_code}, body={r_dup.text}",
+        )
+
+    # ================= Module 7: Feedback =================
+    if journey_id:
+        r = post(
+            f"/api/v1/journeys/{journey_id}/feedback",
+            json={
+                "overall_rating": 5,
+                "employee_rating": 4,
+                "department_rating": 5,
+                "general_feedback": "Great service!"
+            },
+        )
+        check(
+            "POST /api/v1/journeys/{id}/feedback creates feedback (201)",
+            r.status_code == 201,
+            f"status={r.status_code}, body={r.text}",
+        )
+        if r.status_code == 201:
+            check("Feedback response has overall_rating", r.json().get("overall_rating") == 5, f"body={r.json()}")
+
+        # Try submitting feedback again -> expect 409
+        r_dup = post(
+            f"/api/v1/journeys/{journey_id}/feedback",
+            json={
+                "overall_rating": 3,
+                "employee_rating": 3,
+                "department_rating": 3,
+                "general_feedback": "Duplicate attempt"
+            },
+        )
+        check(
+            "POST /api/v1/journeys/{id}/feedback again returns 409",
+            r_dup.status_code == 409,
+            f"status={r_dup.status_code}, body={r_dup.text}",
+        )
+
     print_summary()
 
 

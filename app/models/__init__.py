@@ -5,3 +5,5 @@ from app.models.campaign import Campaign
 from app.models.ad_event import AdEvent
 from app.models.journey import Journey
 from app.models.interaction import Interaction
+from app.models.purchase import Purchase
+from app.models.feedback import Feedback

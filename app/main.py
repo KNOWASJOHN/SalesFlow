@@ -2,7 +2,7 @@ from fastapi import FastAPI, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from typing import Dict, Any
-from app.routers import customers, campaigns, journeys, departments, interactions
+from app.routers import customers, campaigns, journeys, departments, interactions, purchases, feedback
 
 from .core.database import get_db
 
@@ -13,6 +13,8 @@ app.include_router(campaigns.router)
 app.include_router(journeys.router)
 app.include_router(departments.router)
 app.include_router(interactions.router)
+app.include_router(purchases.router)
+app.include_router(feedback.router)
 
 @app.get("/health")
 def health_check(db: Session = Depends(get_db)) -> Dict[str, Any]:
