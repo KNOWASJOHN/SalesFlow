@@ -466,7 +466,7 @@ def main():
                     f"entry={entry}",
                 )
 
-        # Unknown employee → 404
+        # Unknown employee -> 404
         r_bad = get("/api/v1/employees/00000000-0000-0000-0000-000000000000/points")
         check(
             "GET points for unknown employee returns 404",
@@ -474,7 +474,103 @@ def main():
             f"status={r_bad.status_code}, body={r_bad.text}",
         )
 
+    # ================= Module 8: Error Handling =================
+    # Every error must return {"error": "CODE", "message": "..."} -- no raw tracebacks.
+
+    def has_error_shape(resp) -> bool:
+        """Return True if the response body has the canonical error shape."""
+        try:
+            body = resp.json()
+            return isinstance(body, dict) and "error" in body and "message" in body
+        except Exception:
+            return False
+
+    # 1. 404 -- unknown customer
+    r = get(f"/api/v1/customers/{NONEXISTENT_CUSTOMER_ID}")
+    check(
+        "Module 8: unknown customer -> 404 with error shape",
+        r.status_code == 404 and has_error_shape(r),
+        f"status={r.status_code}, body={r.text}",
+    )
+
+    # 2. 404 -- unknown journey
+    r = get(f"/api/v1/journeys/{NONEXISTENT_JOURNEY_ID}")
+    check(
+        "Module 8: unknown journey -> 404 with error shape",
+        r.status_code == 404 and has_error_shape(r),
+        f"status={r.status_code}, body={r.text}",
+    )
+
+    # 3. 409 -- no employee available in nonexistent department
+    r = get(f"/api/v1/departments/{NONEXISTENT_DEPARTMENT_ID}/available-employees")
+    check(
+        "Module 8: no employee available -> 409 with error shape",
+        r.status_code == 409 and has_error_shape(r),
+        f"status={r.status_code}, body={r.text}",
+    )
+
+    # 4. 400 -- validation error (missing required field on customer creation)
+    r = post("/api/v1/customers", json={})
+    check(
+        "Module 8: missing required field -> 400 with error shape",
+        r.status_code == 400 and has_error_shape(r),
+        f"status={r.status_code}, body={r.text}",
+    )
+
+    # 5. 400 -- invalid UUID path param (should be caught as 422->400 by handler)
+    r = get("/api/v1/customers/not-a-uuid")
+    check(
+        "Module 8: invalid UUID path param -> 400/422 with error shape",
+        r.status_code in (400, 422) and has_error_shape(r),
+        f"status={r.status_code}, body={r.text}",
+    )
+
+    # 6. 409 -- duplicate contact number (conflict)
+    dup_contact = "8" + str(uuid.uuid4().int)[:9]
+    post("/api/v1/customers", json={"contact_number": dup_contact})
+    r = post("/api/v1/customers", json={"contact_number": dup_contact})
+    check(
+        "Module 8: duplicate contact -> 409 with error shape",
+        r.status_code == 409 and has_error_shape(r),
+        f"status={r.status_code}, body={r.text}",
+    )
+
+    # 7. 404 -- ad event on unknown campaign
+    r = post(f"/api/v1/campaigns/{NONEXISTENT_JOURNEY_ID}/events", json={"event_type": "click"})
+    check(
+        "Module 8: ad event on unknown campaign -> 404 with error shape",
+        r.status_code == 404 and has_error_shape(r),
+        f"status={r.status_code}, body={r.text}",
+    )
+
+    # 8. 400 -- invalid event_type
+    if campaign_id:
+        r = post(f"/api/v1/campaigns/{campaign_id}/events", json={"event_type": "INVALID"})
+        check(
+            "Module 8: invalid event_type -> 400 with error shape",
+            r.status_code == 400 and has_error_shape(r),
+            f"status={r.status_code}, body={r.text}",
+        )
+
+    # 9. 404 -- points for unknown employee
+    r = get(f"/api/v1/employees/{NONEXISTENT_CUSTOMER_ID}/points")
+    check(
+        "Module 8: points for unknown employee -> 404 with error shape",
+        r.status_code == 404 and has_error_shape(r),
+        f"status={r.status_code}, body={r.text}",
+    )
+
+    # 10. Verify error body never contains a Python traceback string
+    r = get(f"/api/v1/customers/{NONEXISTENT_CUSTOMER_ID}")
+    body_text = r.text
+    check(
+        "Module 8: error body contains no Python traceback",
+        "Traceback" not in body_text and "File \"" not in body_text,
+        f"body={body_text[:200]}",
+    )
+
     print_summary()
+
 
 
 
