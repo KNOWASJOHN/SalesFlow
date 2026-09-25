@@ -574,7 +574,15 @@ def test_a_peer_that_disconnects_is_removed_from_the_room(client, call_id, autho
         assert room.employee_peer is None
         assert room.customer_peer.peer_id == CUSTOMER_PEER_ID
 
-        # The survivor is told, the next time it speaks, that it is alone.
+        # The survivor is pushed a notice the moment the peer drops, without
+        # having to send anything into the void first.
+        left = customer.receive_json()
+        assert left["type"] == "call_state"
+        assert left["payload"]["state"] == "peer_left"
+        assert left["call_id"] == call_id
+
+        # PEER_NOT_CONNECTED still answers the next attempt to talk, so a
+        # client that missed the notice is not left believing the call is up.
         customer.send_json({"type": "offer", "call_id": call_id, "payload": {}})
         assert error_code(customer.receive_json()) == "PEER_NOT_CONNECTED"
 

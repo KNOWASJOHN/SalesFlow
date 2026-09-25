@@ -276,6 +276,81 @@ async def test_close_room_is_safe_for_unknown_call():
     assert manager.rooms == {}
 
 
+# ---------------------------------------------------------------------------
+# 13b: peer-left notice
+# ---------------------------------------------------------------------------
+
+
+async def test_notify_peer_left_tells_only_the_survivor():
+    """The leaver is on its way out; nothing is addressed to it."""
+    manager = SignalingManager()
+    customer_ws, employee_ws = await register_pair(manager)
+
+    await manager.notify_peer_left(CALL_ID, EMPLOYEE_ID)
+
+    assert employee_ws.sent == []
+    assert len(customer_ws.sent) == 1
+
+
+async def test_notify_peer_left_delivers_a_call_state_frame_to_the_survivor():
+    manager = SignalingManager()
+    customer_ws, _ = await register_pair(manager)
+
+    await manager.notify_peer_left(CALL_ID, EMPLOYEE_ID)
+
+    assert len(customer_ws.sent) == 1
+    notice = validate_message(customer_ws.sent[0])
+    assert notice.type is MessageType.CALL_STATE
+    assert notice.call_id == CALL_ID
+    assert notice.payload == {"state": "peer_left"}
+
+
+async def test_notify_peer_left_is_silent_for_an_unknown_room():
+    manager = SignalingManager()
+
+    await manager.notify_peer_left("call-does-not-exist", CUSTOMER_ID)
+
+    assert manager.rooms == {}
+
+
+async def test_notify_peer_left_is_silent_for_a_peer_that_is_not_in_the_room():
+    """A forged or stale peer_id must not produce a notice about a stranger."""
+    manager = SignalingManager()
+    customer_ws, _ = await register_pair(manager)
+
+    await manager.notify_peer_left(CALL_ID, "peer-that-never-joined")
+
+    assert customer_ws.sent == []
+
+
+async def test_notify_peer_left_is_silent_when_the_peer_was_alone():
+    manager = SignalingManager()
+    customer_ws = FakeWebSocket("customer")
+    await manager.register_peer(CALL_ID, CUSTOMER_ID, PeerRole.CUSTOMER, customer_ws)
+
+    await manager.notify_peer_left(CALL_ID, CUSTOMER_ID)
+
+    assert customer_ws.sent == []
+
+
+async def test_notify_peer_left_after_close_room_sends_nothing_more():
+    """
+    Guard against a double notice: tear-down already said "ended", so the
+    disconnect path that follows must not add a second message.
+    """
+    manager = SignalingManager()
+    customer_ws, _ = await register_pair(manager)
+
+    await manager.remove_peer(CALL_ID, EMPLOYEE_ID)
+    await manager.close_room(CALL_ID)
+    assert len(customer_ws.sent) == 1
+
+    await manager.notify_peer_left(CALL_ID, EMPLOYEE_ID)
+
+    assert len(customer_ws.sent) == 1
+    assert validate_message(customer_ws.sent[0]).payload == {"state": "ended"}
+
+
 async def test_manager_does_not_import_database_layers():
     """Module 3 constraint: registry state is never persisted to PostgreSQL."""
     import app.signaling.manager as manager_module

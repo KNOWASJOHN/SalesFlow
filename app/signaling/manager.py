@@ -121,6 +121,42 @@ class SignalingManager:
         if room.customer_peer is None and room.employee_peer is None:
             self.rooms.pop(call_id, None)
 
+    async def notify_peer_left(self, call_id: str, peer_id: str) -> None:
+        """
+        Tell the *remaining* peer that ``peer_id`` has dropped out of the call.
+
+        Called before the disconnecting peer is removed from the room, because
+        once it is gone ``get_other_peer`` can no longer resolve the survivor
+        from the leaver's identity.
+
+        This is deliberately separate from :meth:`remove_peer`, which stays
+        idempotent and silent: a caller that tears a whole room down via
+        :meth:`close_room` has already told the survivor the call ended, and
+        must not follow it with a second notice.
+
+        Safe to call for an unknown ``call_id`` or a peer that is not in the
+        room — both are silent no-ops.
+        """
+        room = self.rooms.get(call_id)
+
+        if room is None:
+            return
+
+        remaining_peer = room.get_other_peer(peer_id)
+
+        if remaining_peer is None:
+            return
+
+        message = SignalingMessage(
+            type="call_state",
+            call_id=call_id,
+            payload={"state": "peer_left"},
+        )
+
+        await remaining_peer.websocket.send_text(
+            serialize_message(message)
+        )
+
     async def close_room(self, call_id: str) -> None:
         """
         Tear the room down, notifying any peer still connected.

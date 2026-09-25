@@ -31,9 +31,12 @@ Message flow
                  by the server and ``target`` resolved by the server.
 ``hangup``    -> the opposite peer receives ``call_state`` ``{"state": "ended"}``
                  and the room is torn down.
-``disconnect``-> the peer is removed from the room. There is no broadcast: a
-                 survivor that keeps talking receives ``PEER_NOT_CONNECTED``,
-                 which is its signal that the other side is gone.
+``disconnect``-> the peer is removed from the room and the opposite peer
+                 receives ``call_state`` ``{"state": "peer_left"}``, so a client
+                 can react to a dropped peer without having to send a frame
+                 into the void first. A later send from that survivor still
+                 gets ``PEER_NOT_CONNECTED``, which remains the authoritative
+                 answer if the notice was missed.
 
 Every failure is reported with the Module 1 error envelope,
 ``{"type": "error", "payload": {"code": ..., "message": ...}}``.
@@ -375,5 +378,9 @@ async def signaling_endpoint(
             pass
     finally:
         if joined and call_id is not None:
+            # Tell the survivor before dropping the leaver: a socket that went
+            # away without a hangup would otherwise leave the other client
+            # waiting on a peer that is never coming back.
+            await signaling_manager.notify_peer_left(call_id, peer_id)
             await signaling_manager.remove_peer(call_id, peer_id)
             logger.info("signaling: %s left call %s", peer_id, call_id)

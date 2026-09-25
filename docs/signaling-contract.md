@@ -101,6 +101,8 @@ ice_candidate          ─────────►    ·forwarded verbatim· 
                        ◄───────────  ice_candidate         ◄─────────────
 hangup                 ─────────►  ·room torn down·
                                                 ◄──── call_state {state: ended}
+  (or socket dies)     ─────────►  ·peer removed·
+                                                ◄──── call_state {state: peer_left}
 ```
 
 Either side may create the offer; the server does not care which one goes
@@ -130,11 +132,21 @@ IDs exist.
 - **Explicit:** send `hangup`. The room is torn down and the other participant
   receives `call_state {"state": "ended"}`.
 - **Abrupt:** close the socket, kill the tab, lose the network. The server
-  removes you from the room. **There is no broadcast** — the surviving
-  participant is not pushed a notification. It learns the other side is gone
-  when its next `offer`/`answer`/`ice_candidate` gets
-  `PEER_NOT_CONNECTED`. Clients that want a UI change on peer loss should
-  treat that error, or a failed ICE connection, as the signal.
+  removes you from the room and pushes the surviving participant
+  `call_state {"state": "peer_left"}`.
+
+So a client does not have to send a frame into the void to discover the other
+side is gone. Use the two states differently:
+
+| Received | Meaning | Suggested reaction |
+|---|---|---|
+| `{"state": "ended"}` | the other side hung up deliberately | close the call UI |
+| `{"state": "peer_left"}` | the other socket dropped without a hangup | offer a reconnect or end the call |
+
+`peer_left` means the peer's *socket* died — it may reconnect to the same
+`call_id`, in which case the server treats it as a fresh join. A stale
+`PEER_NOT_CONNECTED` on a frame sent before the notice arrived is still
+possible; treat the two as the same outcome.
 
 ---
 
