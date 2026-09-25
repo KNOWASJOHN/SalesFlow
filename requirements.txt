@@ -5,3 +5,10 @@ pydantic
 pydantic-settings
 psycopg[binary]
 python-dotenv
+PyJWT>=2.8
+
+# ---- Testing ----
+pytest
+pytest-asyncio
+httpx
+requests

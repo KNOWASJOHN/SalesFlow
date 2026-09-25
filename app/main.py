@@ -8,7 +8,17 @@ from sqlalchemy import text
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from typing import Dict, Any
 
-from app.routers import customers, campaigns, journeys, departments, interactions, purchases, feedback, points
+from app.routers import (
+    customers,
+    campaigns,
+    journeys,
+    departments,
+    interactions,
+    purchases,
+    feedback,
+    points,
+    websocket_signaling,
+)
 from app.core.errors import (
     http_exception_handler,
     validation_exception_handler,
@@ -17,6 +27,7 @@ from app.core.errors import (
     sqlalchemy_error_handler,
     unhandled_exception_handler,
 )
+from app.core.logging import install_access_log_redaction
 from .core.database import get_db
 
 # ---------------------------------------------------------------------------
@@ -26,6 +37,12 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s  %(levelname)-8s  %(name)s  %(message)s",
 )
+
+# The signaling access token travels in the query string of the WebSocket
+# upgrade request, so uvicorn's access log has to be scrubbed before it can
+# ever write a bearer token to disk.
+install_access_log_redaction()
+
 
 # ---------------------------------------------------------------------------
 # App
@@ -57,6 +74,7 @@ app.include_router(interactions.router)
 app.include_router(purchases.router)
 app.include_router(feedback.router)
 app.include_router(points.router)
+app.include_router(websocket_signaling.router)
 
 
 # ---------------------------------------------------------------------------
