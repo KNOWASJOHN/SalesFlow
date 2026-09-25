@@ -19,6 +19,12 @@ POINT_FORMULA = {
 
 
 def process_purchase_points(db: Session, journey_id: uuid.UUID):
+    """
+    Award purchase, interaction and transfer points for a journey's employees.
+
+    Does not commit: the caller owns the transaction, so the purchase row and
+    the points it earns are written or rolled back together.
+    """
     interactions = db.query(Interaction).filter(Interaction.journey_id == journey_id).all()
     
     employee_stats = {}
@@ -58,11 +64,18 @@ def process_purchase_points(db: Session, journey_id: uuid.UUID):
                     reason=f"Initiated {stats['transfers']} transfer(s)"
                 )
             )
-            
-    db.commit()
+
+    db.flush()
 
 
 def process_feedback_points(db: Session, feedback: Feedback):
+    """
+    Award rating points for a journey's employees.
+
+    Does not commit: the caller owns the transaction, so the feedback row and
+    the points it earns are written or rolled back together. A neutral rating
+    (3) awards nothing, which is why the ``points <> 0`` constraint stays safe.
+    """
     if not feedback.overall_rating:
         return
         
@@ -88,8 +101,8 @@ def process_feedback_points(db: Session, feedback: Feedback):
                 reason=reason
             )
         )
-        
-    db.commit()
+
+    db.flush()
 
 
 def get_employee_total_points(db: Session, employee_id: uuid.UUID) -> int:

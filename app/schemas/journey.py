@@ -14,6 +14,12 @@ class JourneyCreateOut(BaseModel):
     status: str
 
 
+class JourneyEndOut(BaseModel):
+    journey_id: uuid.UUID
+    status: str
+    ended_at: datetime
+
+
 class InteractionSummary(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

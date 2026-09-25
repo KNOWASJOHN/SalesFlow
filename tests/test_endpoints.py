@@ -410,6 +410,75 @@ def main():
             f"status={r_dup.status_code}, body={r_dup.text}",
         )
 
+    # ================= Module 7b: Journeys abandoned without a purchase =========
+    # A journey that ends without a purchase must still be reviewable, otherwise
+    # reason_for_not_purchasing can never be filled in by the person it is for.
+    r = post("/api/v1/journeys", json={"customer_id": customer_id})
+    abandoned_journey_id = r.json().get("journey_id") if r.status_code == 201 else None
+    check(
+        "POST /api/v1/journeys starts a second journey for the abandon path (201)",
+        r.status_code == 201 and bool(abandoned_journey_id),
+        f"status={r.status_code}, body={r.text}",
+    )
+
+    if abandoned_journey_id:
+        r = post(f"/api/v1/journeys/{abandoned_journey_id}/abandon")
+        check(
+            "POST /api/v1/journeys/{id}/abandon closes it without a purchase (200)",
+            r.status_code == 200,
+            f"status={r.status_code}, body={r.text}",
+        )
+        if r.status_code == 200:
+            body = r.json()
+            check("Abandoned journey status is 'abandoned'", body.get("status") == "abandoned", f"body={body}")
+            check("Abandoned journey has an ended_at", bool(body.get("ended_at")), f"body={body}")
+
+        # Abandoning again -> expect 409 (already terminal)
+        r_dup = post(f"/api/v1/journeys/{abandoned_journey_id}/abandon")
+        check(
+            "POST /api/v1/journeys/{id}/abandon again returns 409",
+            r_dup.status_code == 409,
+            f"status={r_dup.status_code}, body={r_dup.text}",
+        )
+
+        # Feedback on the abandoned journey -> expect 201
+        r_fb = post(
+            f"/api/v1/journeys/{abandoned_journey_id}/feedback",
+            json={
+                "overall_rating": 3,
+                "reason_for_not_purchasing": "Found a better price elsewhere",
+                "competitor_preference": "Competitor X",
+            },
+        )
+        check(
+            "POST /api/v1/journeys/{id}/feedback works on an abandoned journey (201)",
+            r_fb.status_code == 201,
+            f"status={r_fb.status_code}, body={r_fb.text}",
+        )
+        if r_fb.status_code == 201:
+            check(
+                "Abandoned-journey feedback stores reason_for_not_purchasing",
+                r_fb.json().get("reason_for_not_purchasing") == "Found a better price elsewhere",
+                f"body={r_fb.json()}",
+            )
+
+    # Abandon a nonexistent journey -> expect 404
+    r = post(f"/api/v1/journeys/{NONEXISTENT_JOURNEY_ID}/abandon")
+    check(
+        "POST /api/v1/journeys/{unknown id}/abandon returns 404",
+        r.status_code == 404,
+        f"status={r.status_code}, body={r.text}",
+    )
+
+    # Abandon the already-purchased journey -> expect 409
+    if journey_id:
+        r = post(f"/api/v1/journeys/{journey_id}/abandon")
+        check(
+            "POST /api/v1/journeys/{id}/abandon on a completed journey returns 409",
+            r.status_code == 409,
+            f"status={r.status_code}, body={r.text}",
+        )
+
     # ================= Module 7 (real): Points Engine =================
     # available_employee_id was captured earlier during the interactions section
     if available_employee_id:

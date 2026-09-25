@@ -9,6 +9,7 @@ from app.models.journey import Journey
 from app.models.feedback import Feedback
 from app.models.interaction import Interaction
 from app.schemas.feedback import FeedbackCreate, FeedbackOut
+from app.services.points_service import process_feedback_points
 
 
 router = APIRouter(
@@ -42,7 +43,10 @@ def create_feedback(
             }
         )
 
-    if journey.status not in ("completed", "cancelled"):
+    # A journey reaches a terminal state either by purchase ("completed") or by
+    # abandoning it without one ("abandoned"). Both are reviewable — a customer
+    # who walked away is exactly who reason_for_not_purchasing is for.
+    if journey.status not in ("completed", "abandoned"):
         raise HTTPException(
             status_code=409,
             detail={
@@ -99,10 +103,12 @@ def create_feedback(
     )
 
     db.add(feedback)
+
+    # Same transaction as the feedback row, so a rating that awards points is
+    # never stored without them.
+    process_feedback_points(db, feedback)
+
     db.commit()
     db.refresh(feedback)
-
-    from app.services.points_service import process_feedback_points
-    process_feedback_points(db, feedback)
 
     return feedback

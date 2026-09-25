@@ -1,4 +1,5 @@
 import uuid
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.exc import IntegrityError
@@ -9,6 +10,7 @@ from app.models.customer import Customer
 from app.models.journey import Journey
 from app.models.purchase import Purchase
 from app.schemas.purchase import PurchaseCreate, PurchaseOut
+from app.services.points_service import process_purchase_points
 
 
 router = APIRouter(
@@ -88,15 +90,16 @@ def create_purchase(
     journey.status = "completed"
 
     if journey.ended_at is None:
-        from datetime import datetime, timezone
         journey.ended_at = datetime.now(timezone.utc)
+
+    # The points the purchase earns are added to the same transaction and the
+    # single commit below writes both, so a journey can never end up marked as
+    # purchased without the points that purchase is worth.
+    process_purchase_points(db, journey.journey_id)
 
     try:
         db.commit()
         db.refresh(purchase)
-        
-        from app.services.points_service import process_purchase_points
-        process_purchase_points(db, journey.journey_id)
 
     except IntegrityError:
         db.rollback()
