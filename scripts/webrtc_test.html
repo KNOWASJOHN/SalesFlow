@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Signaling test client</title>
+<style>
+  :root { color-scheme: dark; }
+  body { font: 14px/1.5 ui-monospace, monospace; background:#111; color:#ddd; margin:0; padding:20px; }
+  h1 { font-size:16px; margin:0 0 12px; }
+  .row { display:flex; gap:8px; align-items:center; margin-bottom:8px; flex-wrap:wrap; }
+  button { font:inherit; padding:6px 12px; background:#2a2a2a; color:#ddd; border:1px solid #444; border-radius:4px; cursor:pointer; }
+  button:disabled { opacity:.4; cursor:default; }
+  button.primary { background:#1d4ed8; border-color:#1d4ed8; color:#fff; }
+  button.danger { background:#7f1d1d; border-color:#7f1d1d; color:#fff; }
+  .pill { padding:2px 8px; border-radius:10px; background:#222; border:1px solid #444; }
+  .ok { color:#4ade80; } .bad { color:#f87171; } .warn { color:#fbbf24; }
+  #log { background:#0a0a0a; border:1px solid #333; border-radius:4px; padding:8px; height:260px; overflow:auto; white-space:pre-wrap; font-size:12px; }
+  #stats { background:#0a0a0a; border:1px solid #333; border-radius:4px; padding:8px; white-space:pre-wrap; font-size:12px; }
+  audio { width:100%; margin-top:8px; }
+  label { color:#888; }
+</style>
+</head>
+<body>
+<h1>Signaling test client</h1>
+
+<div class="row">
+  <label>role</label>
+  <select id="role">
+    <option value="customer">customer</option>
+    <option value="employee">employee</option>
+  </select>
+  <button id="btnConnect" class="primary">Connect</button>
+  <button id="btnHangup" class="danger" disabled>Hangup</button>
+  <span class="pill" id="wsState">socket: idle</span>
+  <span class="pill" id="pcState">peer: idle</span>
+</div>
+
+<div class="row">
+  <span id="whoami" class="warn">not connected</span>
+</div>
+
+<div class="row">
+  <label>call</label><span id="callId" class="warn">-</span>
+</div>
+
+<!-- Remote audio: what the other side is sending you. Local is muted to avoid feedback. -->
+<audio id="remoteAudio" autoplay playsinline></audio>
+<audio id="localAudio" autoplay playsinline muted></audio>
+
+<h1 style="margin-top:16px">Media stats <span id="statsLine" class="warn">(no stream yet)</span></h1>
+<div id="stats">inbound audio bytes: 0</div>
+
+<h1 style="margin-top:16px">Log</h1>
+<div id="log"></div>
+
+<script>
+// ---------------------------------------------------------------------------
+// Config
+// ---------------------------------------------------------------------------
+const WS_BASE = "ws://127.0.0.1:8000";
+
+// Loopback (both tabs on this machine) connects with host candidates alone, so
+// no STUN is required. Add one only when testing across two machines, where a
+// server-reflexive candidate is needed to punch through NAT.
+const ICE_SERVERS = [];
+
+const RTC_CONFIG = { iceServers: ICE_SERVERS };
+
+// ---------------------------------------------------------------------------
+// UI helpers
+// ---------------------------------------------------------------------------
+const $ = (id) => document.getElementById(id);
+const logEl = $("log");
+
+function log(msg, cls) {
+  const t = new Date().toLocaleTimeString();
+  logEl.innerHTML += (cls ? `<span class="${cls}">` : "") + `[${t}] ${msg}` + (cls ? "</span>" : "") + "\n";
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+function setWs(text, cls) { $("wsState").textContent = "socket: " + text; $("wsState").className = "pill " + (cls || ""); }
+function setPc(text, cls) { $("pcState").textContent = "peer: " + text; $("pcState").className = "pill " + (cls || ""); }
+
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+let ws = null;
+let pc = null;
+let localStream = null;
+let callId = null;
+let peerId = null;
+let role = null;
+let statsTimer = null;
+
+// Candidates can arrive before setRemoteDescription has been applied; queue
+// them rather than dropping (dropping silently stalls the handshake).
+let pendingCandidates = [];
+let remoteDescriptionSet = false;
+
+// ---------------------------------------------------------------------------
+// Signaling
+// ---------------------------------------------------------------------------
+function send(type, payload) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) { log("cannot send " + type + ": socket not open", "bad"); return; }
+  const envelope = { type, call_id: callId, payload: payload || {} };
+  log("-> " + type + " " + JSON.stringify(payload || {}).slice(0, 120));
+  ws.send(JSON.stringify(envelope));
+}
+
+async function connect() {
+  role = $("role").value;
+  $("btnConnect").disabled = true;
+
+  let cfg;
+  try {
+    const res = await fetch("/tokens?role=" + encodeURIComponent(role));
+    cfg = await res.json();
+  } catch (e) {
+    log("could not fetch a token: " + e, "bad");
+    $("btnConnect").disabled = false;
+    return;
+  }
+  if (cfg.error) { log("token error: " + cfg.error, "bad"); $("btnConnect").disabled = false; return; }
+
+  callId = cfg.call_id;
+  peerId = cfg.peer_id;
+  $("callId").textContent = callId;
+  $("whoami").textContent = "you are " + peerId;
+  log("token minted for " + peerId + " (expires in " + cfg.expires_in + "s)");
+
+  // Mic first: if this fails there is no point opening a socket.
+  try {
+    localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+    $("localAudio").srcObject = localStream;
+    log("microphone captured: " + localStream.getAudioTracks().length + " audio track(s)", "ok");
+  } catch (e) {
+    log("getUserMedia failed: " + e.name + " - " + e.message, "bad");
+    log("the page must be served over http://127.0.0.1 or https, and mic permission granted", "warn");
+    $("btnConnect").disabled = false;
+    return;
+  }
+
+  ws = new WebSocket(WS_BASE + "/ws/signaling?access_token=" + encodeURIComponent(cfg.token));
+  setWs("connecting", "warn");
+
+  ws.onopen = () => {
+    setWs("open", "ok");
+    $("btnHangup").disabled = false;
+    send("join", { role });
+  };
+
+  ws.onmessage = (ev) => handleFrame(JSON.parse(ev.data));
+
+  ws.onclose = (ev) => {
+    setWs("closed (" + ev.code + ")", ev.code === 1000 ? "" : "bad");
+    log("socket closed: code=" + ev.code + (ev.reason ? " reason=" + ev.reason : ""));
+    $("btnConnect").disabled = false;
+    $("btnHangup").disabled = true;
+    teardownPeer();
+  };
+
+  ws.onerror = () => log("socket error", "bad");
+}
+
+function handleFrame(msg) {
+  // Error frames carry no call_id, so switch on type only.
+  switch (msg.type) {
+    case "error":
+      log("<- error " + msg.payload.code + ": " + msg.payload.message, "bad");
+      break;
+
+    case "call_state": {
+      const state = msg.payload.state;
+      log("<- call_state " + state);
+      if (state === "waiting") log("waiting for the other participant, keep this tab open", "warn");
+      if (state === "peer_left") {
+        log("the other participant dropped - live stream stops here", "warn");
+        setPc("peer left", "bad");
+      }
+      if (state === "ended") log("the other participant hung up", "warn");
+      break;
+    }
+
+    case "ready": {
+      log("<- ready: both participants present", "ok");
+      // The customer is the impolite peer: it creates the offer. This keeps the
+      // two sides from both offering, which would deadlock the handshake.
+      if (role === "customer") {
+        startPeer().then(() => createOffer()).catch((e) => log("offer failed: " + e, "bad"));
+      } else {
+        startPeer().catch((e) => log("peer setup failed: " + e, "bad"));
+      }
+      break;
+    }
+
+    case "offer":
+      log("<- offer (" + msg.payload.sdp.length + " bytes of SDP)");
+      handleOffer(msg.payload.sdp).catch((e) => log("answer failed: " + e, "bad"));
+      break;
+
+    case "answer":
+      log("<- answer (" + msg.payload.sdp.length + " bytes of SDP)");
+      pc.setRemoteDescription({ type: "answer", sdp: msg.payload.sdp })
+        .then(() => { remoteDescriptionSet = true; return drainCandidates(); })
+        .catch((e) => log("setRemoteDescription(answer) failed: " + e, "bad"));
+      break;
+
+    case "ice_candidate":
+      log("<- ice_candidate " + (msg.payload.candidate || "").slice(0, 60));
+      handleRemoteCandidate(msg.payload);
+      break;
+
+    case "hangup":
+      log("<- hangup");
+      break;
+
+    default:
+      log("<- unhandled frame type " + msg.type, "warn");
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Peer connection
+// ---------------------------------------------------------------------------
+function startPeer() {
+  if (pc) return Promise.resolve();
+
+  pc = new RTCPeerConnection(RTC_CONFIG);
+
+  // Sending audio is what makes this a real call rather than a message test.
+  localStream.getTracks().forEach((track) => pc.addTrack(track, localStream));
+
+  pc.ontrack = (ev) => {
+    log("remote audio track received", "ok");
+    $("remoteAudio").srcObject = ev.streams[0];
+    startStats();
+  };
+
+  pc.onicecandidate = (ev) => {
+    if (ev.candidate) {
+      send("ice_candidate", {
+        candidate: ev.candidate.candidate,
+        sdpMid: ev.candidate.sdpMid,
+        sdpMLineIndex: ev.candidate.sdpMLineIndex,
+      });
+    } else {
+      log("local ICE gathering finished");
+    }
+  };
+
+  pc.onconnectionstatechange = () => {
+    const s = pc.connectionState;
+    log("connection state: " + s, s === "connected" ? "ok" : (s === "failed" ? "bad" : ""));
+    setPc(s, s === "connected" ? "ok" : (s === "failed" || s === "disconnected" ? "bad" : "warn"));
+  };
+
+  pc.oniceconnectionstatechange = () => log("ice connection state: " + pc.iceConnectionState);
+
+  setPc("new", "warn");
+  return Promise.resolve();
+}
+
+async function createOffer() {
+  const offer = await pc.createOffer({ offerToReceiveAudio: true });
+  await pc.setLocalDescription(offer);
+  send("offer", { sdp: pc.localDescription.sdp });
+}
+
+async function handleOffer(sdp) {
+  await startPeer();
+  await pc.setRemoteDescription({ type: "offer", sdp });
+  remoteDescriptionSet = true;
+  await drainCandidates();
+
+  const answer = await pc.createAnswer();
+  await pc.setLocalDescription(answer);
+  send("answer", { sdp: pc.localDescription.sdp });
+}
+
+function handleRemoteCandidate(payload) {
+  const candidate = new RTCIceCandidate({
+    candidate: payload.candidate,
+    sdpMid: payload.sdpMid,
+    sdpMLineIndex: payload.sdpMLineIndex,
+  });
+
+  if (!remoteDescriptionSet) {
+    pendingCandidates.push(candidate);
+    return;
+  }
+  pc.addIceCandidate(candidate).catch((e) => log("addIceCandidate failed: " + e, "bad"));
+}
+
+async function drainCandidates() {
+  const queued = pendingCandidates;
+  pendingCandidates = [];
+  if (queued.length) log("applying " + queued.length + " queued ICE candidate(s)");
+  for (const c of queued) {
+    await pc.addIceCandidate(c).catch((e) => log("queued addIceCandidate failed: " + e, "bad"));
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Stats: the actual proof that media is flowing, not just that SDP was swapped.
+// ---------------------------------------------------------------------------
+function startStats() {
+  stopStats();
+  statsTimer = setInterval(updateStats, 1000);
+  updateStats();
+}
+
+function stopStats() {
+  if (statsTimer) { clearInterval(statsTimer); statsTimer = null; }
+}
+
+async function updateStats() {
+  if (!pc) return;
+  const report = await pc.getStats();
+  let inbound = null;
+  let pair = null;
+
+  report.forEach((s) => {
+    if (s.type === "inbound-rtp" && s.kind === "audio") inbound = s;
+    if (s.type === "candidate-pair" && s.state === "succeeded" && s.nominated) pair = s;
+  });
+
+  if (!inbound) { $("stats").textContent = "no inbound audio yet"; return; }
+
+  const bytes = inbound.bytesReceived || 0;
+  const packets = inbound.packetsReceived || 0;
+
+  $("statsLine").textContent = bytes > 0 ? "(receiving)" : "(connected, no packets yet)";
+  $("statsLine").className = bytes > 0 ? "ok" : "warn";
+
+  $("stats").textContent =
+    "inbound audio bytes : " + bytes + "\n" +
+    "inbound audio pkts  : " + packets + "\n" +
+    "packets lost        : " + (inbound.packetsLost || 0) + "\n" +
+    "jitter              : " + (inbound.jitter != null ? inbound.jitter.toFixed(5) : "-") + " s\n" +
+    "locally looped back : " + (pc.currentLocalDescription ? "yes" : "no") + "\n" +
+    "connection state    : " + pc.connectionState + "\n" +
+    "ice state           : " + pc.iceConnectionState + "\n" +
+    (pair ? "selected pair       : " + pair.localCandidateId + " <-> " + pair.remoteCandidateId + "\n" : "");
+}
+
+// ---------------------------------------------------------------------------
+// Teardown
+// ---------------------------------------------------------------------------
+function teardownPeer() {
+  stopStats();
+  if (pc) { pc.close(); pc = null; }
+  remoteDescriptionSet = false;
+  pendingCandidates = [];
+  $("remoteAudio").srcObject = null;
+  setPc("idle");
+  $("statsLine").textContent = "(no stream yet)";
+  $("statsLine").className = "warn";
+}
+
+function hangup() {
+  if (ws && ws.readyState === WebSocket.OPEN) send("hangup", {});
+  teardownPeer();
+  if (localStream) { localStream.getTracks().forEach((t) => t.stop()); localStream = null; }
+  if (ws) { ws.onclose = null; ws.close(1000); ws = null; }
+  setWs("idle");
+  $("btnConnect").disabled = false;
+  $("btnHangup").disabled = true;
+  log("hung up", "warn");
+}
+
+$("btnConnect").onclick = connect;
+$("btnHangup").onclick = hangup;
+
+log("ready. pick a role, press Connect, then open this page in a second tab with the other role.");
+log("both tabs must use the same call id - the server hands out the same one to both.", "warn");
+
+// Prefill the role from ?role= so two tabs can be opened from printed URLs.
+const preRole = new URLSearchParams(location.search).get("role");
+if (preRole === "customer" || preRole === "employee") $("role").value = preRole;
+</script>
+</body>
+</html>
