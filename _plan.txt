@@ -1,4 +1,4 @@
-﻿WebRTC Signaling Server â€” Modular Build Plan
+﻿ebRTC Signaling Server â€” Modular Build Plan
 Sales Interaction Tracking and Analytics System  |  WebRTC Doc Module 1 (FastAPI signaling), split for incremental build
 Owner: Member 2 (Backend / Database)
 Important: Scope note: this plan covers ONLY the FastAPI signaling server â€” the piece labeled &quot;Module 1&quot; in the WebRTC Complete Setup doc. The employee web client (Module 2) and Flutter client (Module 3) are separate people&apos;s work and consume the protocol contract this plan produces; they are not built here. Signaling coordinates connection setup only â€” no audio ever passes through this server.
