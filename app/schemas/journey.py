@@ -31,6 +31,20 @@ class InteractionSummary(BaseModel):
     ended_at: Optional[datetime] = None
 
 
+class JourneyListOut(BaseModel):
+    """One row of a paginated journey list, without the interaction children."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    journey_id: uuid.UUID
+    customer_id: uuid.UUID
+    campaign_id: Optional[uuid.UUID] = None
+    status: str
+    purchased: bool
+    started_at: datetime
+    ended_at: Optional[datetime] = None
+
+
 class JourneyOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

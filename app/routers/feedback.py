@@ -1,14 +1,17 @@
 import uuid
+from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.core.pagination import PageParams, page_params
 from app.models.customer import Customer
 from app.models.journey import Journey
 from app.models.feedback import Feedback
 from app.models.interaction import Interaction
 from app.schemas.feedback import FeedbackCreate, FeedbackOut
+from app.services import feedback_service
 from app.services.points_service import process_feedback_points
 
 
@@ -16,6 +19,41 @@ router = APIRouter(
     prefix="/api/v1/journeys",
     tags=["Feedback"]
 )
+
+# The feedback *list* is not scoped to a journey, so it cannot hang off the
+# journey-scoped router above. Same module, second router.
+feedback_list_router = APIRouter(
+    prefix="/api/v1",
+    tags=["Feedback"]
+)
+
+
+@feedback_list_router.get("/feedback", response_model=List[FeedbackOut])
+def list_feedback(
+    employee_id: Optional[uuid.UUID] = Query(
+        default=None,
+        description="Only feedback attributed to this employee.",
+    ),
+    department_id: Optional[uuid.UUID] = Query(
+        default=None,
+        description="Only feedback attributed to this department.",
+    ),
+    page: PageParams = Depends(page_params),
+    db: Session = Depends(get_db),
+):
+    """
+    Feedback, newest first, filtered by who it is attributed to.
+
+    Attribution is the employee and department the journey ended with, so after
+    a transfer the feedback belongs to the receiving employee — that is the
+    subset ``?employee_id=`` returns.
+    """
+    return feedback_service.list_feedback(
+        db,
+        employee_id=employee_id,
+        department_id=department_id,
+        page=page,
+    )
 
 
 @router.post(
@@ -88,10 +126,20 @@ def create_feedback(
             }
         )
 
+    # Attribution is resolved here, inside the write, so every feedback row
+    # carries the employee and department it is about from the moment it
+    # exists. The journey's latest interaction is the one it ended on, which
+    # after a transfer is the receiving employee, not the one who transferred.
+    attributed_employee_id, attributed_department_id = feedback_service.resolve_attribution(
+        db, journey.journey_id
+    )
+
     feedback = Feedback(
         journey_id=journey.journey_id,
         customer_id=customer.customer_id,
         feedback_type="overall",
+        employee_id=attributed_employee_id,
+        department_id=attributed_department_id,
         overall_rating=payload.overall_rating,
         employee_rating=payload.employee_rating,
         department_rating=payload.department_rating,

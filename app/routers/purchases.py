@@ -1,11 +1,13 @@
 import uuid
 from datetime import datetime, timezone
+from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.core.pagination import PageParams, page_params
 from app.models.customer import Customer
 from app.models.journey import Journey
 from app.models.purchase import Purchase
@@ -15,6 +17,13 @@ from app.services.points_service import process_purchase_points
 
 router = APIRouter(
     prefix="/api/v1/journeys",
+    tags=["Purchases"]
+)
+
+# The purchase *list* is not scoped to a journey, so it cannot hang off the
+# journey-scoped router above. Same module, second router.
+purchase_list_router = APIRouter(
+    prefix="/api/v1",
     tags=["Purchases"]
 )
 
@@ -113,3 +122,40 @@ def create_purchase(
         )
 
     return purchase
+
+
+@purchase_list_router.get("/purchases", response_model=List[PurchaseOut])
+def list_purchases(
+    product_category: Optional[str] = Query(
+        default=None,
+        description="Exact product category to filter by.",
+    ),
+    purchased_after: Optional[datetime] = Query(
+        default=None,
+        description="Inclusive lower bound on purchased_at (ISO 8601).",
+    ),
+    purchased_before: Optional[datetime] = Query(
+        default=None,
+        description="Inclusive upper bound on purchased_at (ISO 8601).",
+    ),
+    page: PageParams = Depends(page_params),
+    db: Session = Depends(get_db),
+):
+    """
+    Purchases over a time window, newest first.
+
+    Revenue and purchase-count tiles read this; the window is inclusive on both
+    ends so a whole day is ``?purchased_after=<00:00>&purchased_before=<23:59:59>``.
+    """
+    query = db.query(Purchase)
+
+    if product_category is not None:
+        query = query.filter(Purchase.product_category == product_category)
+
+    if purchased_after is not None:
+        query = query.filter(Purchase.purchased_at >= purchased_after)
+
+    if purchased_before is not None:
+        query = query.filter(Purchase.purchased_at <= purchased_before)
+
+    return page.apply(query.order_by(Purchase.purchased_at.desc())).all()

@@ -13,10 +13,13 @@ from app.routers import (
     campaigns,
     journeys,
     departments,
+    employees,
     interactions,
     purchases,
     feedback,
     points,
+    analytics,
+    calls,
     websocket_signaling,
 )
 from app.core.errors import (
@@ -70,10 +73,15 @@ app.include_router(customers.router)
 app.include_router(campaigns.router)
 app.include_router(journeys.router)
 app.include_router(departments.router)
+app.include_router(employees.router)
 app.include_router(interactions.router)
 app.include_router(purchases.router)
+app.include_router(purchases.purchase_list_router)
 app.include_router(feedback.router)
+app.include_router(feedback.feedback_list_router)
 app.include_router(points.router)
+app.include_router(analytics.router)
+app.include_router(calls.router)
 app.include_router(websocket_signaling.router)
 
 

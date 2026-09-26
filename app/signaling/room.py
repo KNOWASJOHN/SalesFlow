@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 from app.signaling.exceptions import RoomFull
@@ -32,6 +33,10 @@ class Room:
 
     def __init__(self, call_id: str):
         self.room_id = f"call:{call_id}"
+        # When the room was created, i.e. when the first peer joined. Exposed
+        # through /calls/active; signaling itself never reads it. Still memory
+        # only — a restart loses it along with the room.
+        self.created_at = datetime.now(timezone.utc)
         self.customer_peer: Optional[Peer] = None
         self.employee_peer: Optional[Peer] = None
 

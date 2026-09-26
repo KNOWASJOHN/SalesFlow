@@ -13,6 +13,15 @@ class EmployeePoint(Base):
     employee_id = Column(UUID(as_uuid=True), ForeignKey("employees.employee_id"), nullable=False)
     points = Column(Integer, nullable=False)
     reason = Column(String(150), nullable=False)
+    # Structured companion to `reason`: purchase | rating | interaction | transfer.
+    # Nullable because rows written before this column existed only have the
+    # free-text reason; every new row sets it.
+    reason_code = Column(String(20), nullable=True)
+    related_interaction_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("interactions.interaction_id"),
+        nullable=True
+    )
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=text("NOW()"))
 
     __table_args__ = (
